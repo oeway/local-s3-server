@@ -14,13 +14,13 @@ def main():
     parser = argparse.ArgumentParser(description='A local S3-compatible server.')
     parser.add_argument('--hostname', dest='hostname', action='store',
                         default='localhost',
-                        help='Hostname to listen on.')
+                        help='Hostname to listen on, defaults to localhost, use 0.0.0.0 to listen on all interfaces')
     parser.add_argument('--port', dest='port', action='store',
                         default=10001, type=int,
                         help='Port to run server on.')
-    parser.add_argument('--root', dest='root', action='store',
-                        default='%s/s3store' % os.environ['HOME'],
-                        help='Defaults to $HOME/s3store.')
+    parser.add_argument('--root-dir', dest='root_dir', action='store',
+                        default='./s3store',
+                        help='Defaults to ./s3store.')
     parser.add_argument('--pull-from-aws', dest='pull_from_aws', action='store_true',
                         default=False,
                         help='Pull non-existent keys from aws.')
@@ -30,7 +30,7 @@ def main():
     run_server(
         hostname=args.hostname,
         port=args.port,
-        root=args.root,
+        root=args.root_dir,
         pull_from_aws=args.pull_from_aws
     )
     return 0

@@ -1,5 +1,6 @@
-import urllib
+import urllib.request
 import datetime
+
 
 from . import xml_templates
 
@@ -52,7 +53,7 @@ def get_acl(handler):
 def load_from_aws(handler, bucket_name, item_name):
     bucket = handler.server.file_store.get_bucket(bucket_name)
     aws_url = "http://s3.amazonaws.com/%s/%s" % (bucket_name, item_name)
-    response = urllib2.urlopen(aws_url)
+    response = urllib.request.urlopen(aws_url)
     data = response.read()
     response_headers = response.info()
     return handler.server.file_store.store_data(bucket, item_name, response_headers, data)
