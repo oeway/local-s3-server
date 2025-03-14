@@ -8,6 +8,10 @@ import logging
 from typing import Dict, List, Optional, Union
 import xml.etree.ElementTree as ET
 from datetime import datetime
+import hmac
+import hashlib
+import base64
+import urllib.parse
 
 import uvicorn
 from fastapi import FastAPI, Request, Response, Header, HTTPException, Depends, Security
@@ -44,6 +48,14 @@ file_store = None
 # Add security scheme
 security = HTTPBasic(auto_error=False)
 
+def verify_signature_v2(string_to_sign: str, signature: str) -> bool:
+    """Verify AWS Signature Version 2."""
+    key = config["secret_access_key"].encode('utf-8')
+    calculated = base64.b64encode(
+        hmac.new(key, string_to_sign.encode('utf-8'), hashlib.sha1).digest()
+    ).decode('utf-8')
+    return hmac.compare_digest(calculated, signature)
+
 # Add authentication dependency
 def verify_aws_auth(request: Request, credentials: Optional[HTTPBasicCredentials] = Security(security)):
     """Verify AWS credentials."""
@@ -59,6 +71,39 @@ def verify_aws_auth(request: Request, credentials: Optional[HTTPBasicCredentials
         )
         if is_access_key_valid and is_secret_key_valid:
             return credentials
+    
+    # Check for presigned URL (AWS Signature Version 2)
+    if "Signature" in request.query_params:
+        try:
+            # Get query parameters
+            params = dict(request.query_params)
+            signature = params.pop("Signature")
+            expires = params.pop("Expires", None)
+            access_key = params.pop("AWSAccessKeyId", None)
+            
+            # Verify access key
+            if not access_key or not secrets.compare_digest(
+                access_key.encode("utf8"),
+                config["access_key_id"].encode("utf8")
+            ):
+                raise HTTPException(status_code=401, detail="Invalid access key")
+            
+            # Verify expiration
+            if expires and int(expires) < int(datetime.now().timestamp()):
+                raise HTTPException(status_code=401, detail="Request has expired")
+            
+            # Create string to sign
+            string_to_sign = f"{request.method}\n\n\n{expires}\n{request.url.path}"
+            
+            # Verify signature
+            if verify_signature_v2(string_to_sign, signature):
+                return HTTPBasicCredentials(
+                    username=config["access_key_id"],
+                    password=config["secret_access_key"]
+                )
+        except Exception as e:
+            logger.error(f"Error verifying presigned URL: {e}")
+            pass
     
     # Try AWS auth format
     auth_header = request.headers.get("Authorization")
