@@ -1,0 +1,4 @@
+-e .
+boto==2.49.0
+pytest
+pytest-asyncio
