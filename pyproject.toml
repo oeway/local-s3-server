@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "local-s3-server"
-version = "0.1"
+version = "0.2.0"
 description = "A lightweight, FastAPI-based S3-compatible server for local development and testing"
 readme = "README.md"
 authors = [
@@ -27,7 +27,6 @@ dependencies = [
     "fastapi>=0.68.0",
     "uvicorn>=0.15.0",
     "python-multipart>=0.0.5",
-    "boto3>=1.18.0",
 ]
 requires-python = ">=3.7"
 
