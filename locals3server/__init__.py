@@ -1,4 +1,4 @@
-"""fasts3 - A lightweight server clone of Amazon S3.
+"""local-s3-server - A lightweight S3-compatible server for local development and testing.
 
 This module provides a local S3-compatible server for development and testing.
 """

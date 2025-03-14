@@ -1,4 +1,4 @@
-# FastS3
+# Local S3 Server
 
 A lightweight, FastAPI-based S3-compatible server designed for local development and testing. Perfect for developing and testing S3-dependent applications without connecting to actual AWS services.
 
@@ -14,7 +14,7 @@ A lightweight, FastAPI-based S3-compatible server designed for local development
 ## Installation
 
 ```bash
-pip install fasts3
+pip install local-s3-server
 ```
 
 ## Quick Start
@@ -32,7 +32,7 @@ export AWS_CREDENTIAL_FILE="path/to/fake_credentials"
 
 3. Start the server:
 ```bash
-python -m fasts3
+python -m locals3server
 ```
 
 4. Use with any S3 client by pointing to the local endpoint:
@@ -50,9 +50,9 @@ s3 = boto3.client('s3',
 
 The server can be configured using environment variables:
 
-- `FASTS3_HOST`: Host to bind (default: localhost)
-- `FASTS3_PORT`: Port to listen on (default: 10001)
-- `FASTS3_STORAGE`: Storage directory (default: ~/.fasts3)
+- `LOCAL_S3_HOST`: Host to bind (default: localhost)
+- `LOCAL_S3_PORT`: Port to listen on (default: 10001)
+- `LOCAL_S3_STORAGE`: Storage directory (default: ~/.local-s3-server)
 
 ## Examples
 
@@ -72,8 +72,8 @@ See the [examples directory](./examples) for complete examples.
 To set up the development environment:
 
 ```bash
-git clone https://github.com/yourusername/fasts3.git
-cd fasts3
+git clone https://github.com/yourusername/local-s3-server.git
+cd local-s3-server
 pip install -e ".[dev]"
 pytest
 ```

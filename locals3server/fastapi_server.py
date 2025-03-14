@@ -21,7 +21,10 @@ from . import xml_templates
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="fasts3", description="A lightweight server clone of Amazon S3")
+app = FastAPI(
+    title="local-s3-server",
+    description="A lightweight S3-compatible server for local development and testing"
+)
 
 # Global configuration
 config = {

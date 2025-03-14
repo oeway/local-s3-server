@@ -1,7 +1,7 @@
-"""Main entry point for running fasts3 as a module.
+"""Main entry point for running local-s3-server as a module.
 
 This allows running the server using:
-    python -m fasts3
+    python -m locals3server
 """
 
 import sys
@@ -11,7 +11,7 @@ import os
 from .fastapi_server import run_server
 
 def main():
-    parser = argparse.ArgumentParser(description='A Mock-S3 server.')
+    parser = argparse.ArgumentParser(description='A local S3-compatible server.')
     parser.add_argument('--hostname', dest='hostname', action='store',
                         default='localhost',
                         help='Hostname to listen on.')
