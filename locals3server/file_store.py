@@ -196,6 +196,9 @@ class FileStore(object):
                 'filename': filename,
                 'size': size,
             }
+        # Remove the metadata section if it exists
+        if config.has_section('metadata'):
+            config.remove_section('metadata')
         config.add_section('metadata')
         config.set('metadata', 'size', metadata['size'])
         config.set('metadata', 'md5', metadata['md5'])
@@ -256,8 +259,10 @@ class FileStore(object):
                 'filename': filename,
                 'size': size,
             }
-        if not config.has_section('metadata'):
-            config.add_section('metadata')
+        # Remove the metadata section if it exists
+        if config.has_section('metadata'):
+            config.remove_section('metadata')
+        config.add_section('metadata')
         config.set('metadata', 'size', metadata['size'])
         config.set('metadata', 'md5', metadata['md5'])
         config.set('metadata', 'filename', metadata['filename'])

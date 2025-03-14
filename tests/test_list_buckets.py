@@ -3,11 +3,10 @@ import boto
 from boto.s3.connection import OrdinaryCallingFormat
 
 def test_list_buckets(s3_connection, bucket):
-    # Point boto to our fake credentials file
-    os.environ['AWS_CREDENTIAL_FILE'] = os.path.join(os.path.dirname(__file__), 'fake_credentials')
-    
-    # Create a new connection using the fake credentials
+    # Create a new connection using the same credentials as the fixture
     s3_with_creds = boto.connect_s3(
+        aws_access_key_id="test",
+        aws_secret_access_key="test",
         host='localhost',
         port=10001,
         calling_format=OrdinaryCallingFormat(),
@@ -22,7 +21,4 @@ def test_list_buckets(s3_connection, bucket):
     
     # Verify that our fixture bucket is in the list
     bucket_names = [b.name for b in buckets]
-    assert bucket.name in bucket_names
-    
-    # Clean up environment
-    del os.environ['AWS_CREDENTIAL_FILE'] 
+    assert bucket.name in bucket_names 

@@ -10,9 +10,11 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, Request, Response, Header, HTTPException, Depends
+from fastapi import FastAPI, Request, Response, Header, HTTPException, Depends, Security
 from fastapi.responses import StreamingResponse
 from starlette.datastructures import Headers
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import secrets
 
 from .file_store import FileStore
 from . import xml_templates
@@ -31,11 +33,57 @@ config = {
     "hostname": "localhost",
     "port": 10001,
     "root": f"{os.environ['HOME']}/s3store",
-    "pull_from_aws": False
+    "pull_from_aws": False,
+    "access_key_id": "test",
+    "secret_access_key": "test"
 }
 
 # Initialize file store
 file_store = None
+
+# Add security scheme
+security = HTTPBasic(auto_error=False)
+
+# Add authentication dependency
+def verify_aws_auth(request: Request, credentials: Optional[HTTPBasicCredentials] = Security(security)):
+    """Verify AWS credentials."""
+    # Try HTTP Basic Auth first
+    if credentials:
+        is_access_key_valid = secrets.compare_digest(
+            credentials.username.encode("utf8"),
+            config["access_key_id"].encode("utf8")
+        )
+        is_secret_key_valid = secrets.compare_digest(
+            credentials.password.encode("utf8"),
+            config["secret_access_key"].encode("utf8")
+        )
+        if is_access_key_valid and is_secret_key_valid:
+            return credentials
+    
+    # Try AWS auth format
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("AWS "):
+        try:
+            # AWS auth format: "AWS AccessKeyId:Signature"
+            auth_parts = auth_header[4:].split(":")
+            if len(auth_parts) == 2:
+                access_key = auth_parts[0]
+                if secrets.compare_digest(
+                    access_key.encode("utf8"),
+                    config["access_key_id"].encode("utf8")
+                ):
+                    return HTTPBasicCredentials(
+                        username=access_key,
+                        password=config["secret_access_key"]
+                    )
+        except Exception:
+            pass
+    
+    raise HTTPException(
+        status_code=401,
+        detail="Not authenticated",
+        headers={"WWW-Authenticate": "Basic"},
+    )
 
 
 def get_file_store():
@@ -72,7 +120,12 @@ def parse_bucket_and_key(request: Request) -> tuple:
 
 
 @app.get("/{path:path}")
-async def get_handler(request: Request, path: str, file_store: FileStore = Depends(get_file_store)):
+async def get_handler(
+    request: Request,
+    path: str,
+    credentials: HTTPBasicCredentials = Security(verify_aws_auth),
+    file_store: FileStore = Depends(get_file_store)
+):
     """Handle GET requests for listing buckets, bucket contents, and retrieving objects."""
     bucket_name, item_name = parse_bucket_and_key(request)
     
@@ -94,13 +147,22 @@ async def get_handler(request: Request, path: str, file_store: FileStore = Depen
 
 
 @app.get("/")
-async def root(request: Request, file_store: FileStore = Depends(get_file_store)):
+async def root(
+    request: Request,
+    credentials: HTTPBasicCredentials = Security(verify_aws_auth),
+    file_store: FileStore = Depends(get_file_store)
+):
     """Handle GET requests to the root path."""
     return await get_handler(request, "", file_store)
 
 
 @app.head("/{path:path}")
-async def head_handler(request: Request, path: str, file_store: FileStore = Depends(get_file_store)):
+async def head_handler(
+    request: Request,
+    path: str,
+    credentials: HTTPBasicCredentials = Security(verify_aws_auth),
+    file_store: FileStore = Depends(get_file_store)
+):
     """Handle HEAD requests for checking object existence."""
     bucket_name, item_name = parse_bucket_and_key(request)
     
@@ -142,7 +204,8 @@ async def head_handler(request: Request, path: str, file_store: FileStore = Depe
 @app.put("/{path:path}")
 async def put_handler(
     request: Request, 
-    path: str, 
+    path: str,
+    credentials: HTTPBasicCredentials = Security(verify_aws_auth),
     file_store: FileStore = Depends(get_file_store)
 ):
     """Handle PUT requests for creating buckets and storing objects."""
@@ -194,7 +257,8 @@ async def put_handler(
 @app.delete("/{path:path}")
 async def delete_handler(
     request: Request, 
-    path: str, 
+    path: str,
+    credentials: HTTPBasicCredentials = Security(verify_aws_auth),
     file_store: FileStore = Depends(get_file_store)
 ):
     """Handle DELETE requests for removing objects and buckets."""
@@ -234,7 +298,8 @@ async def delete_handler(
 @app.post("/{path:path}")
 async def post_handler(
     request: Request, 
-    path: str, 
+    path: str,
+    credentials: HTTPBasicCredentials = Security(verify_aws_auth),
     file_store: FileStore = Depends(get_file_store)
 ):
     """Handle POST requests, primarily for multi-delete operations."""
@@ -364,7 +429,14 @@ def get_item_handler(bucket_name: str, item_name: str, file_store: FileStore):
     )
 
 
-def run_server(hostname="localhost", port=10001, root=None, pull_from_aws=False):
+def run_server(
+    hostname="localhost",
+    port=10001,
+    root=None,
+    pull_from_aws=False,
+    access_key_id="test",
+    secret_access_key="test"
+):
     """Run the FastAPI server."""
     global config
     
@@ -374,6 +446,8 @@ def run_server(hostname="localhost", port=10001, root=None, pull_from_aws=False)
     if root:
         config["root"] = root
     config["pull_from_aws"] = pull_from_aws
+    config["access_key_id"] = access_key_id
+    config["secret_access_key"] = secret_access_key
     
     # Initialize file store
     global file_store
