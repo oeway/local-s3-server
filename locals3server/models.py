@@ -24,4 +24,4 @@ class S3Item(object):
         if 'creation_date' in kwargs:
             self.creation_date = kwargs['creation_date']
         if 'modified_date' in kwargs:
-            self.creation_date = kwargs['modified_date']
+            self.modified_date = kwargs['modified_date']

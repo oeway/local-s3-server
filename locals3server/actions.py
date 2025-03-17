@@ -1,8 +1,12 @@
 import urllib.request
 import datetime
+from typing import TYPE_CHECKING
 
 
 from . import xml_templates
+
+if TYPE_CHECKING:
+    from .file_store import FileStore
 
 
 def list_buckets(handler):

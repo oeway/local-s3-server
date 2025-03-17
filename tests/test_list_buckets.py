@@ -7,8 +7,8 @@ def test_list_buckets(s3_connection, bucket):
     s3_with_creds = boto.connect_s3(
         aws_access_key_id="test",
         aws_secret_access_key="test",
-        host='localhost',
-        port=10001,
+        host=s3_connection.host,
+        port=s3_connection.port,
         calling_format=OrdinaryCallingFormat(),
         is_secure=False
     )

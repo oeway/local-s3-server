@@ -6,6 +6,16 @@ from pathlib import Path
 from locals3server.fastapi_server import app, config
 import boto.s3.connection
 from boto.s3.connection import OrdinaryCallingFormat
+import threading
+import time
+import tempfile
+from typing import Generator
+import socket
+import shutil
+
+import boto
+from boto.s3.connection import S3Connection
+from locals3server.file_store import FileStore
 
 def run_server(host, port, storage_dir):
     # Ensure storage directory exists
@@ -39,7 +49,6 @@ def test_server():
     server_process.start()
     
     # Wait a moment for server to start
-    import time
     time.sleep(1)
     
     # Provide the server details to the test
@@ -58,23 +67,90 @@ def test_server():
     
     # Clean up storage directory
     if storage_dir.exists():
-        import shutil
         shutil.rmtree(storage_dir)
 
+def find_free_port():
+    """Find a free port to use for the server"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+    return port
+
+def run_server_thread(host, port, storage_dir):
+    """Run the server in a thread with proper configuration"""
+    # Update server configuration
+    config["hostname"] = host
+    config["port"] = port
+    config["root"] = storage_dir
+    config["access_key_id"] = "test"
+    config["secret_access_key"] = "test"
+    
+    # Initialize file store
+    global file_store
+    file_store = FileStore(storage_dir)
+    
+    # Run server
+    import uvicorn
+    uvicorn.run(app, host=host, port=port)
+
 @pytest.fixture(scope="function")
-def s3_connection(test_server):
+def s3_connection() -> Generator[S3Connection, None, None]:
     """
-    Fixture that provides a boto S3 connection configured to talk to the test server
+    Fixture that creates a connection to the mock S3 server
     """
-    conn = boto.s3.connection.S3Connection(
-        aws_access_key_id=test_server["access_key_id"],
-        aws_secret_access_key=test_server["secret_access_key"],
-        is_secure=False,
-        host=test_server["host"],
-        port=test_server["port"],
-        calling_format=OrdinaryCallingFormat()
+    host = "127.0.0.1"
+    port = find_free_port()
+    
+    # Create a temporary directory for storage
+    storage_dir = tempfile.mkdtemp()
+    
+    # Create and expose the file_store instance
+    file_store = FileStore(storage_dir)
+    
+    # Update server configuration and set the file_store instance
+    config["hostname"] = host
+    config["port"] = port
+    config["root"] = storage_dir
+    config["access_key_id"] = "test"
+    config["secret_access_key"] = "test"
+    app.state.file_store = file_store  # Set the file_store instance in the app state
+    
+    # Start server in a separate thread
+    server_thread = threading.Thread(
+        target=uvicorn.run,
+        args=(app,),
+        kwargs={
+            "host": host,
+            "port": port
+        },
+        daemon=True
     )
-    return conn
+    server_thread.start()
+    
+    # Wait for server to start
+    time.sleep(1)
+    
+    # Create connection with proper authentication
+    conn = S3Connection(
+        aws_access_key_id="test",
+        aws_secret_access_key="test",
+        is_secure=False,
+        port=port,
+        host=host,
+        calling_format=boto.s3.connection.OrdinaryCallingFormat(),
+    )
+    
+    # Expose file_store instance
+    conn.file_store = file_store
+    
+    yield conn
+    
+    # Cleanup
+    try:
+        shutil.rmtree(storage_dir)
+    except OSError:
+        pass
 
 @pytest.fixture(scope="function")
 def bucket(s3_connection):
@@ -84,10 +160,9 @@ def bucket(s3_connection):
     bucket_name = "test-bucket"
     bucket = s3_connection.create_bucket(bucket_name)
     yield bucket
-    
-    # Clean up all objects in the bucket
-    for key in bucket.list():
-        key.delete()
-    
-    # Delete the bucket
-    bucket.delete() 
+    try:
+        for key in bucket.list():
+            key.delete()
+        bucket.delete()
+    except:
+        pass 

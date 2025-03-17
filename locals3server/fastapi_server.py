@@ -23,6 +23,7 @@ import secrets
 from .file_store import FileStore
 from . import xml_templates
 from .sigv4 import verify_presigned_url, get_signature_key, sign
+from .errors import InvalidKeyName
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -288,14 +289,14 @@ def verify_aws_auth(request: Request, credentials: Optional[HTTPBasicCredentials
 
 def get_file_store():
     """Dependency to get the file store instance."""
-    global file_store
-    if file_store is None:
-        file_store = FileStore(config["root"])
-    return file_store
+    if not hasattr(app.state, 'file_store'):
+        app.state.file_store = FileStore(config["root"])
+    return app.state.file_store
 
 
 def parse_bucket_and_key(request: Request) -> tuple:
     """Parse bucket name and key from the request path."""
+    # Get the raw path without decoding
     path = request.url.path
     host = request.headers.get('host', '').split(':')[0]
     bucket_name = None
@@ -305,16 +306,31 @@ def parse_bucket_and_key(request: Request) -> tuple:
     if host != config["hostname"] and config["hostname"] in host:
         idx = host.index(config["hostname"])
         bucket_name = host[:idx-1]
-        item_name = path.strip('/')
+        item_name = urllib.parse.unquote(path.strip('/'))
     # Path style: localhost:10001/bucket/key
     else:
         parts = path.strip('/').split('/', 1)
-        bucket_name = parts[0] if parts else None
-        item_name = parts[1] if len(parts) > 1 else None
+        bucket_name = urllib.parse.unquote(parts[0]) if parts else None
+        
+        # Get the full item name from the URL, preserving special characters
+        if len(parts) > 1:
+            # Use the raw query to get the full path including special characters
+            raw_path = request.scope.get('raw_path', b'').decode('utf-8')
+            if raw_path:
+                # Extract the item name from the raw path
+                raw_parts = raw_path.strip('/').split('/', 1)
+                if len(raw_parts) > 1:
+                    item_name = urllib.parse.unquote(raw_parts[1])
+                else:
+                    item_name = urllib.parse.unquote(parts[1])
+            else:
+                item_name = urllib.parse.unquote(parts[1])
+        else:
+            item_name = None
         
         # Handle case where bucket name is in the path
         if not bucket_name and path.startswith('/'):
-            bucket_name = path.strip('/')
+            bucket_name = urllib.parse.unquote(path.strip('/'))
     
     return bucket_name, item_name
 
@@ -429,9 +445,14 @@ async def put_handler(
     # Check for copy request
     copy_source = request.headers.get('x-amz-copy-source')
     if copy_source:
-        src_bucket, sep, src_key = copy_source.partition('/')
-        file_store.copy_item(src_bucket, src_key, bucket_name, item_name, request)
-        return Response(status_code=200, content="", media_type="text/xml")
+        try:
+            src_bucket, sep, src_key = copy_source.partition('/')
+            file_store.copy_item(src_bucket, src_key, bucket_name, item_name, request)
+            return Response(status_code=200, content="", media_type="text/xml")
+        except InvalidKeyName as e:
+            # Return a proper error response for invalid key names
+            xml = f'<?xml version="1.0" encoding="UTF-8"?><Error><Code>InvalidKeyName</Code><Message>{str(e)}</Message></Error>'
+            return Response(status_code=400, content=xml, media_type="application/xml")
     
     # Store item
     bucket = file_store.get_bucket(bucket_name)
@@ -447,11 +468,16 @@ async def put_handler(
         headers[key.lower()] = value
     
     # Store the item
-    item = file_store.store_data(bucket, item_name, headers, body)
-    
-    # Return response
-    headers = {"Etag": f'"{item.md5}"', "Content-Type": "text/xml"}
-    return Response(status_code=200, content="", headers=headers)
+    try:
+        item = file_store.store_data(bucket, item_name, headers, body)
+        
+        # Return response
+        headers = {"Etag": f'"{item.md5}"', "Content-Type": "text/xml"}
+        return Response(status_code=200, content="", headers=headers)
+    except InvalidKeyName as e:
+        # Return a proper error response for invalid key names
+        xml = f'<?xml version="1.0" encoding="UTF-8"?><Error><Code>InvalidKeyName</Code><Message>{str(e)}</Message></Error>'
+        return Response(status_code=400, content=xml, media_type="application/xml")
 
 
 @app.delete("/{path:path}")

@@ -12,3 +12,7 @@ class BucketNotEmpty(Exception):
         self.http_status = '409'
     def __str__(self):
         return '%s, %s' % (self.http_status, self.message)
+
+
+class InvalidKeyName(Exception):
+    pass
