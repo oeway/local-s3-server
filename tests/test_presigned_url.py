@@ -8,13 +8,16 @@ import boto3
 from botocore.client import Config
 
 @pytest.fixture(scope="function")
-def s3_client(test_server):
+def s3_client(s3_connection):
     """Fixture that provides a boto3 S3 client configured for the test server."""
+    host = s3_connection.host
+    port = s3_connection.port
+    
     return boto3.client(
         's3',
-        endpoint_url=f"http://{test_server['host']}:{test_server['port']}",
-        aws_access_key_id=test_server['access_key_id'],
-        aws_secret_access_key=test_server['secret_access_key'],
+        endpoint_url=f"http://{host}:{port}",
+        aws_access_key_id="test",
+        aws_secret_access_key="test",
         region_name='us-east-1',
         config=Config(
             signature_version='s3v4',  # Use SigV4 (modern version)
@@ -22,7 +25,7 @@ def s3_client(test_server):
         )
     )
 
-def test_presigned_url_get(test_server, s3_client, bucket):
+def test_presigned_url_get(s3_client, bucket):
     """Test generating and using a presigned URL for GET."""
     # Create test data
     key = "test_presigned.txt"
@@ -41,7 +44,7 @@ def test_presigned_url_get(test_server, s3_client, bucket):
     assert response.status_code == 200
     assert response.content == content
 
-def test_presigned_url_put(test_server, s3_client, bucket):
+def test_presigned_url_put(s3_client, bucket):
     """Test generating and using a presigned URL for PUT."""
     key = "test_presigned_put.txt"
     content = b"Uploaded via presigned URL!"
@@ -61,7 +64,7 @@ def test_presigned_url_put(test_server, s3_client, bucket):
     response = s3_client.get_object(Bucket=bucket.name, Key=key)
     assert response['Body'].read() == content
 
-def test_presigned_url_expiry(test_server, s3_client, bucket):
+def test_presigned_url_expiry(s3_client, bucket):
     """Test presigned URL expiration."""
     key = "test_presigned_expiry.txt"
     content = b"This URL will expire quickly!"
@@ -81,7 +84,7 @@ def test_presigned_url_expiry(test_server, s3_client, bucket):
     response = requests.get(url)
     assert response.status_code == 401  # Unauthorized is returned for expired URLs
 
-def test_presigned_url_invalid_signature(test_server, s3_client, bucket):
+def test_presigned_url_invalid_signature(s3_client, bucket):
     """Test presigned URL with tampered signature."""
     key = "test_presigned_invalid.txt"
     content = b"This URL will be tampered with!"

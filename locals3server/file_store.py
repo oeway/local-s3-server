@@ -10,6 +10,7 @@ from .errors import BucketNotEmpty, NoSuchBucket, InvalidKeyName
 import configparser
 import mimetypes
 import urllib.parse
+import logging
 
 CONTENT_FILE = '.s3local_content'
 METADATA_FILE = '.s3local_metadata'
@@ -70,7 +71,7 @@ class FileStore:
                     # Calculate object metadata
                     with open(full_path, 'rb') as f:
                         content = f.read()
-                        md5 = hashlib.md5(content).hexdigest()
+                        md5 = hashlib.md5(content, usedforsecurity=False).hexdigest()
                         size = len(content)
 
                     # Try to get content type
@@ -113,7 +114,7 @@ class FileStore:
 
     def _stream_file(self, source: BinaryIO, chunk_size: int = CHUNK_SIZE):
         """Stream a file in chunks to calculate MD5 and size"""
-        md5 = hashlib.md5()
+        md5 = hashlib.md5(usedforsecurity=False)
         size = 0
         while True:
             chunk = source.read(chunk_size)
@@ -133,24 +134,28 @@ class FileStore:
                 buckets.append(Bucket(row['name'], row['created_at']))
         return buckets
 
-    def get_bucket(self, bucket_name: str) -> Optional[Bucket]:
-        """Get a specific bucket"""
-        # Clear bucket cache to ensure fresh data
-        self._buckets = None
-        for bucket in self.buckets:
+    def get_bucket(self, bucket_name):
+        """Get a bucket by name"""
+        if not self._buckets:
+            self._buckets = self.get_all_buckets()
+        
+        for bucket in self._buckets:
             if bucket.name == bucket_name:
                 return bucket
-        return None
+        
+        # If bucket not found, raise NoSuchBucket exception
+        raise NoSuchBucket()
 
     def create_bucket(self, bucket_name: str) -> Bucket:
         """Create a new bucket"""
         if bucket_name not in [bucket.name for bucket in self.buckets]:
             try:
                 os.makedirs(os.path.join(self.root, bucket_name))
-            except:
-                # mismatch
-                pass
-            self.db.create_bucket(bucket_name)
+            except OSError as e:
+                # Log the error but continue if it's just that the directory already exists
+                if e.errno != 17:  # 17 is EEXIST (File exists)
+                    logging.warning(f"Error creating bucket directory: {e}")
+                self.db.create_bucket(bucket_name)
             self._buckets = None  # Reset cache
         return self.get_bucket(bucket_name)
 
@@ -245,7 +250,7 @@ class FileStore:
         # Validate key name
         self._validate_key_name(item_name)
         
-        md5 = hashlib.md5(data).hexdigest()
+        md5 = hashlib.md5(data, usedforsecurity=False).hexdigest()
         size = len(data)
         content_type = headers.get('content-type', 'application/octet-stream')
         if 'content-length' not in headers:

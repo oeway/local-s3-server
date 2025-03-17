@@ -11,6 +11,39 @@ A lightweight, FastAPI-based S3-compatible server designed for local development
 - Perfect for testing and development environments
 - No AWS account required
 
+## Supported S3 Operations
+
+The following S3 operations are currently supported:
+
+- **Bucket Operations**
+  - CreateBucket
+  - DeleteBucket
+  - ListBuckets
+  - GetBucketLocation
+
+- **Object Operations**
+  - PutObject
+  - GetObject
+  - DeleteObject
+  - DeleteObjects (multiple objects)
+  - ListObjects / ListObjectsV2
+  - CopyObject
+
+- **Other Features**
+  - Presigned URLs (GET and PUT)
+  - Basic authentication
+  - Path-style and virtual-hosted style addressing
+  - Content-Type detection
+  - Nested object paths
+
+## Security Considerations
+
+This library is designed for local development and testing only. It is not intended for production use or for storing sensitive data. The authentication is simplified and should not be considered secure.
+
+- Default credentials are used (access_key_id="test", secret_access_key="test")
+- Data is stored unencrypted on the local filesystem
+- No HTTPS support by default
+
 ## Installation
 
 ```bash
@@ -58,14 +91,18 @@ The server can be configured using environment variables:
 
 The `examples` directory contains sample code for common operations:
 
-- Creating buckets and objects
-- Uploading and downloading files
-- Listing buckets and objects
-- Deleting objects
-- Working with nested paths
-- Image handling
+- `basic_operations.py`: Creating buckets and objects, uploading and downloading files, listing buckets and objects, deleting objects
+- `image_handling.py`: Working with images, setting content types, and using presigned URLs
 
-See the [examples directory](./examples) for complete examples.
+To run the examples:
+
+```bash
+# Start the server in one terminal
+python -m locals3server
+
+# Run an example in another terminal
+python examples/basic_operations.py
+```
 
 ## Development
 

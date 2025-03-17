@@ -2,15 +2,39 @@ name: Publish to PyPI
 
 on:
   workflow_dispatch:
-    # Optional inputs, you can add more according to your needs
     inputs:
-      # version:
-      #   description: 'Version of the package to release'
-      #   required: true
-      #   default: '1.0.0'
+      version:
+        description: 'Version of the package to release'
+        required: false
+        default: ''
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.7', '3.8', '3.9', '3.10', '3.11']
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v2
+      
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+        
+    - name: Run tests
+      run: |
+        pytest
+        
   publish:
+    needs: test
     runs-on: ubuntu-latest
     steps:
     - name: Check out code
