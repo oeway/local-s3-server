@@ -213,26 +213,42 @@ def verify_presigned_url(
         }
         
         # Create canonical request
-        signed_headers = query_params.get('X-Amz-SignedHeaders', '').split(';')
-        payload_hash = 'UNSIGNED-PAYLOAD'
+        canonical_uri = urllib.parse.quote(uri, safe='/~')
         
-        canonical_request = create_canonical_request(
-            method,
-            uri,
-            query_params_without_sig,
-            headers,
-            signed_headers,
-            payload_hash
+        # Sort and encode query parameters
+        canonical_querystring = '&'.join(
+            f"{urllib.parse.quote(k, safe='~')}={urllib.parse.quote(v, safe='~')}"
+            for k, v in sorted(query_params_without_sig.items())
         )
+        
+        # Create canonical headers
+        signed_headers = query_params.get('X-Amz-SignedHeaders', '').split(';')
+        canonical_headers = ''.join(
+            f"{header}:{headers.get(header, '').strip()}\n"
+            for header in sorted(signed_headers)
+        )
+        
+        # Create signed headers string
+        signed_headers_str = ';'.join(sorted(signed_headers))
+        
+        # Create canonical request
+        canonical_request = '\n'.join([
+            method,
+            canonical_uri,
+            canonical_querystring,
+            canonical_headers,
+            signed_headers_str,
+            'UNSIGNED-PAYLOAD'
+        ])
         
         # Create string to sign
         credential_scope = f'{datestamp}/{region}/{service}/aws4_request'
-        string_to_sign = create_string_to_sign(
+        string_to_sign = '\n'.join([
             'AWS4-HMAC-SHA256',
-            request_datetime,
+            amz_date,
             credential_scope,
-            canonical_request
-        )
+            hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()
+        ])
         
         # Calculate signature
         signing_key = get_signature_key(secret_key, datestamp, region, service)
@@ -241,5 +257,9 @@ def verify_presigned_url(
         # Compare signatures
         return hmac.compare_digest(calculated_signature, provided_signature)
         
-    except Exception:
+    except Exception as e:
+        import traceback
+        import logging
+        logging.error(f"Error verifying presigned URL: {e}")
+        logging.error(traceback.format_exc())
         return False 

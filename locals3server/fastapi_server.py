@@ -22,6 +22,7 @@ import secrets
 
 from .file_store import FileStore
 from . import xml_templates
+from .sigv4 import verify_presigned_url, get_signature_key, sign
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -39,7 +40,8 @@ config = {
     "root": f"{os.environ['HOME']}/s3store",
     "pull_from_aws": False,
     "access_key_id": "test",
-    "secret_access_key": "test"
+    "secret_access_key": "test",
+    "region": "us-east-1"  # Add default region
 }
 
 # Initialize file store
@@ -56,79 +58,232 @@ def verify_signature_v2(string_to_sign: str, signature: str) -> bool:
     ).decode('utf-8')
     return hmac.compare_digest(calculated, signature)
 
+def verify_signature_v4(request: Request, headers: Dict[str, str]) -> bool:
+    """Verify AWS Signature Version 4 header authentication."""
+    try:
+        # Extract required headers
+        auth_header = headers.get('authorization', '')
+        if not auth_header.startswith('AWS4-HMAC-SHA256 '):
+            logger.debug("Not a SigV4 auth header")
+            return False
+        
+        # Parse credential and signature from Authorization header
+        auth_parts = dict(part.split('=', 1) for part in auth_header[17:].split(', '))
+        cred = auth_parts.get('Credential')
+        sig = auth_parts.get('Signature')
+        signed_headers = auth_parts.get('SignedHeaders', '').split(';')
+        
+        if not all([cred, sig, signed_headers]):
+            logger.error("Missing required auth components")
+            return False
+        
+        # Parse credential string
+        cred_parts = cred.split('/')
+        if len(cred_parts) != 5:
+            logger.error("Invalid credential format")
+            return False
+        access_key, datestamp, region, service, aws_request = cred_parts
+        
+        # Verify access key
+        if not secrets.compare_digest(access_key, config["access_key_id"]):
+            logger.error("Invalid access key")
+            return False
+        
+        # Get request components
+        amz_date = headers.get('x-amz-date')
+        if not amz_date:
+            logger.error("Missing x-amz-date header")
+            return False
+        
+        # Create canonical request
+        canonical_uri = urllib.parse.quote(request.url.path)
+        
+        # Sort and encode query parameters
+        canonical_querystring = '&'.join(
+            f"{urllib.parse.quote(k, safe='~')}={urllib.parse.quote(v, safe='~')}"
+            for k, v in sorted(request.query_params.items())
+        )
+        
+        # Create canonical headers with lowercase header names
+        canonical_headers = ''.join(
+            f"{header}:{headers.get(header, '').strip()}\n"
+            for header in sorted(signed_headers)
+        )
+        
+        signed_headers_str = ';'.join(sorted(signed_headers))
+        
+        # Get payload hash from header or calculate it
+        payload_hash = headers.get('x-amz-content-sha256', 'UNSIGNED-PAYLOAD')
+        
+        canonical_request = '\n'.join([
+            request.method,
+            canonical_uri,
+            canonical_querystring,
+            canonical_headers,
+            signed_headers_str,
+            payload_hash
+        ])
+        
+        logger.debug(f"Canonical Request:\n{canonical_request}")
+        
+        # Create string to sign
+        algorithm = 'AWS4-HMAC-SHA256'
+        credential_scope = f"{datestamp}/{region}/{service}/aws4_request"
+        string_to_sign = '\n'.join([
+            algorithm,
+            amz_date,
+            credential_scope,
+            hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()
+        ])
+        
+        logger.debug(f"String to Sign:\n{string_to_sign}")
+        
+        # Calculate signature
+        signing_key = get_signature_key(
+            config["secret_access_key"],
+            datestamp,
+            region,
+            service
+        )
+        calculated_signature = hmac.new(
+            signing_key,
+            string_to_sign.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        
+        logger.debug(f"Calculated Signature: {calculated_signature}")
+        logger.debug(f"Provided Signature: {sig}")
+        
+        # Compare signatures
+        return hmac.compare_digest(calculated_signature, sig)
+    
+    except Exception as e:
+        logger.error(f"Error verifying SigV4 header authentication: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+
 # Add authentication dependency
 def verify_aws_auth(request: Request, credentials: Optional[HTTPBasicCredentials] = Security(security)):
     """Verify AWS credentials."""
-    # Try HTTP Basic Auth first
-    if credentials:
-        is_access_key_valid = secrets.compare_digest(
-            credentials.username.encode("utf8"),
-            config["access_key_id"].encode("utf8")
-        )
-        is_secret_key_valid = secrets.compare_digest(
-            credentials.password.encode("utf8"),
-            config["secret_access_key"].encode("utf8")
-        )
-        if is_access_key_valid and is_secret_key_valid:
-            return credentials
-    
-    # Check for presigned URL (AWS Signature Version 2)
-    if "Signature" in request.query_params:
-        try:
-            # Get query parameters
-            params = dict(request.query_params)
-            signature = params.pop("Signature")
-            expires = params.pop("Expires", None)
-            access_key = params.pop("AWSAccessKeyId", None)
-            
-            # Verify access key
-            if not access_key or not secrets.compare_digest(
-                access_key.encode("utf8"),
+    try:
+        # Try HTTP Basic Auth first
+        if credentials:
+            is_access_key_valid = secrets.compare_digest(
+                credentials.username.encode("utf8"),
                 config["access_key_id"].encode("utf8")
-            ):
-                raise HTTPException(status_code=401, detail="Invalid access key")
-            
-            # Verify expiration
-            if expires and int(expires) < int(datetime.now().timestamp()):
-                raise HTTPException(status_code=401, detail="Request has expired")
-            
-            # Create string to sign
-            string_to_sign = f"{request.method}\n\n\n{expires}\n{request.url.path}"
-            
-            # Verify signature
-            if verify_signature_v2(string_to_sign, signature):
+            )
+            is_secret_key_valid = secrets.compare_digest(
+                credentials.password.encode("utf8"),
+                config["secret_access_key"].encode("utf8")
+            )
+            if is_access_key_valid and is_secret_key_valid:
+                return credentials
+        
+        # Get headers in lowercase
+        headers = {k.lower(): v for k, v in request.headers.items()}
+        logger.debug(f"Headers: {headers}")
+        logger.debug(f"Query Params: {dict(request.query_params)}")
+        
+        # Check for SigV4 header authentication
+        if 'authorization' in headers and headers['authorization'].startswith('AWS4-HMAC-SHA256'):
+            if verify_signature_v4(request, headers):
                 return HTTPBasicCredentials(
                     username=config["access_key_id"],
                     password=config["secret_access_key"]
                 )
-        except Exception as e:
-            logger.error(f"Error verifying presigned URL: {e}")
-            pass
-    
-    # Try AWS auth format
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("AWS "):
-        try:
-            # AWS auth format: "AWS AccessKeyId:Signature"
-            auth_parts = auth_header[4:].split(":")
-            if len(auth_parts) == 2:
-                access_key = auth_parts[0]
-                if secrets.compare_digest(
+        
+        # Check for SigV4 presigned URL
+        if "X-Amz-Algorithm" in request.query_params:
+            try:
+                # Extract query parameters and headers
+                query_params = dict(request.query_params)
+                
+                # Verify SigV4 presigned URL
+                is_valid = verify_presigned_url(
+                    method=request.method,
+                    uri=request.url.path,
+                    query_params=query_params,
+                    headers=headers,
+                    region=config["region"],
+                    secret_key=config["secret_access_key"]
+                )
+                
+                if is_valid:
+                    return HTTPBasicCredentials(
+                        username=config["access_key_id"],
+                        password=config["secret_access_key"]
+                    )
+            except Exception as e:
+                logger.error(f"Error verifying SigV4 presigned URL: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
+        # Check for SigV2 presigned URL (legacy support)
+        if "Signature" in request.query_params:
+            try:
+                # Get query parameters
+                params = dict(request.query_params)
+                signature = params.pop("Signature")
+                expires = params.pop("Expires", None)
+                access_key = params.pop("AWSAccessKeyId", None)
+                
+                # Verify access key
+                if not access_key or not secrets.compare_digest(
                     access_key.encode("utf8"),
                     config["access_key_id"].encode("utf8")
                 ):
+                    raise HTTPException(status_code=401, detail="Invalid access key")
+                
+                # Verify expiration
+                if expires and int(expires) < int(datetime.now().timestamp()):
+                    raise HTTPException(status_code=401, detail="Request has expired")
+                
+                # Create string to sign
+                string_to_sign = f"{request.method}\n\n\n{expires}\n{request.url.path}"
+                
+                # Verify signature
+                if verify_signature_v2(string_to_sign, signature):
                     return HTTPBasicCredentials(
-                        username=access_key,
+                        username=config["access_key_id"],
                         password=config["secret_access_key"]
                     )
-        except Exception:
-            pass
-    
-    raise HTTPException(
-        status_code=401,
-        detail="Not authenticated",
-        headers={"WWW-Authenticate": "Basic"},
-    )
+            except Exception as e:
+                logger.error(f"Error verifying SigV2 presigned URL: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
+        # Try AWS SigV2 auth format (legacy support)
+        auth_header = headers.get("authorization")
+        if auth_header and auth_header.startswith("AWS "):
+            try:
+                # AWS auth format: "AWS AccessKeyId:Signature"
+                auth_parts = auth_header[4:].split(":")
+                if len(auth_parts) == 2:
+                    access_key = auth_parts[0]
+                    if secrets.compare_digest(
+                        access_key.encode("utf8"),
+                        config["access_key_id"].encode("utf8")
+                    ):
+                        return HTTPBasicCredentials(
+                            username=access_key,
+                            password=config["secret_access_key"]
+                        )
+            except Exception as e:
+                logger.error(f"Error verifying SigV2 header authentication: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    except Exception as e:
+        logger.error(f"Error in verify_aws_auth: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise
 
 
 def get_file_store():

@@ -17,7 +17,7 @@ def s3_client(test_server):
         aws_secret_access_key=test_server['secret_access_key'],
         region_name='us-east-1',
         config=Config(
-            signature_version='s3',  # Use SigV2 instead of SigV4
+            signature_version='s3v4',  # Use SigV4 (modern version)
             s3={'addressing_style': 'path'}  # Use path-style addressing
         )
     )
